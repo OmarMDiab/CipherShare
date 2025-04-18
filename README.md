@@ -3,7 +3,7 @@
 A decentralized file sharing system implementing efficient peer discovery and secure chunk-based file transfers.
 ![
 Home Screen
-](https://images\Home_Screen.pngimages\Home_Screen.png)
+](https://github.com/OmarMDiab/CipherShare/blob/main/images/Home_Screen.png)
 
 ## Key Components
 
