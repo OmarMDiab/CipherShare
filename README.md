@@ -11,7 +11,7 @@ Register
 Choose node
 ](https://github.com/OmarMDiab/CipherShare/blob/main/images/Node.png)
 
-### Share file using Our Cipher Share!
+### 3. Share file using Our Cipher Share!
 ![
 Home Screen
 ](https://github.com/OmarMDiab/CipherShare/blob/main/images/Home.png)
