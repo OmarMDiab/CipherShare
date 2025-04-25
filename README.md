@@ -1,9 +1,23 @@
 # Distributed Peer-to-Peer File Sharing Network
 
 A decentralized file sharing system implementing efficient peer discovery and secure chunk-based file transfers.
+### 1. Register
+![
+Register
+](https://github.com/OmarMDiab/CipherShare/blob/main/images/Register.png)
+
+### 2. Choose Node
+![
+Choose node
+](https://github.com/OmarMDiab/CipherShare/blob/main/images/Node.png)
+
+### Share file using Our Cipher Share!
 ![
 Home Screen
-](https://github.com/OmarMDiab/CipherShare/blob/main/images/Home_Screen.png)
+](https://github.com/OmarMDiab/CipherShare/blob/main/images/Home.png)
+
+
+
 
 ## Key Components
 
