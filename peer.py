@@ -248,7 +248,8 @@ class PeerNode:
             logger.error(f"Error getting peers: {str(e)}")
             return {}
 
-    def download_file(self, peer_address, filename, progress_callback=None):
+    def download_file(self, peer_address, filename, expected_hash=None, progress_callback=None):
+        """Download a file from another peer with integrity verification."""
         try:
             host, port = peer_address.split(':')
             url = f"http://{host}:{port}/{filename}"
@@ -264,19 +265,30 @@ class PeerNode:
                 
                 total_size = int(response.headers.get('content-length', 0))
                 downloaded = 0
+                sha256 = hashlib.sha256()  # Initialize hash object
                 
                 with open(dest_path, 'wb') as f:
                     for chunk in response.iter_content(chunk_size=8192):
                         if chunk:
                             f.write(chunk)
+                            sha256.update(chunk)  # Update hash with each chunk
                             downloaded += len(chunk)
                             if progress_callback and total_size > 0:
                                 progress = min(int((downloaded / total_size) * 100), 100)
                                 progress_callback(progress)
-                                
+                
+                # Verify hash if expected_hash is provided
+                if expected_hash:
+                    computed_hash = sha256.hexdigest()
+                    if computed_hash != expected_hash:
+                        logger.error(f"Hash mismatch for {filename}. Expected {expected_hash}, got {computed_hash}")
+                        os.remove(dest_path)  # Remove corrupted file
+                        return False
+                    
                 logger.info(f"Download complete: {filename}")                
                 return True
-            elif response.status_code == 401 or response.status_code == 403:
+                
+            elif response.status_code in (401, 403):
                 logger.error("Authentication failure during file download")
                 st.session_state.authenticated = False
                 st.session_state.token = None
@@ -288,7 +300,69 @@ class PeerNode:
             
         except Exception as e:
             logger.error(f"Download error: {str(e)}")
+            if os.path.exists(dest_path):
+                os.remove(dest_path)  # Cleanup on error
             return False
+
+    def upload_file(self, uploaded_file):
+        """Handle file upload and chunking process.
+        
+        Args:
+            uploaded_file: File object to upload
+            
+        Returns:
+            tuple: (success, message)
+        """
+        try:
+            temp_path = os.path.join(self.shared_dir, uploaded_file.name)
+            
+            # Save uploaded file temporarily
+            with open(temp_path, 'wb') as f:
+                f.write(uploaded_file.getbuffer())
+            
+            # Split file into chunks
+            chunks = []
+            with open(temp_path, 'rb') as f:
+                while chunk := f.read(CHUNK_SIZE):
+                    chunks.append(chunk)
+            
+            # Create manifest structure
+            manifest = {
+                "original_filename": uploaded_file.name,
+                "total_chunks": len(chunks),
+                "owner": self.username,
+                "chunks": []
+            }
+            
+            # Write chunks and populate manifest
+            for i, chunk in enumerate(chunks):
+                chunk_name = f"{uploaded_file.name}.part{i+1:04}"
+                chunk_path = os.path.join(self.shared_dir, chunk_name)
+                
+                with open(chunk_path, 'wb') as cf:
+                    cf.write(chunk)
+                
+                manifest['chunks'].append({
+                    "chunk_name": chunk_name,
+                    "sha256": hashlib.sha256(chunk).hexdigest()
+                })
+            
+            # Write manifest file
+            manifest_path = os.path.join(self.shared_dir, f"{uploaded_file.name}.manifest")
+            with open(manifest_path, 'w') as mf:
+                json.dump(manifest, mf)
+            
+            # Clean up temporary file
+            os.remove(temp_path)
+            
+            # Update rendezvous server with new files
+            self.register_with_rendezvous()
+            
+            return True, f"File shared successfully: {uploaded_file.name}"
+            
+        except Exception as e:
+            logger.error(f"Error uploading file: {str(e)}")
+            return False, f"Error sharing file: {str(e)}"
 
     def shutdown(self):
         """Shutdown the peer node."""
@@ -634,45 +708,17 @@ elif st.session_state.authenticated:
                         if st.button(f"Share ➡️", key=f"share_{uploaded_file.name}"):
                             logger.info(f"Sharing file: {uploaded_file.name}")
                             
-                            try:
-                                with open(temp_path, 'wb') as f:
-                                    f.write(uploaded_file.getbuffer())
-                                
-                                chunks = []
-                                with open(temp_path, 'rb') as f:
-                                    while chunk := f.read(CHUNK_SIZE):
-                                        chunks.append(chunk)
-                                
-                                manifest = {
-                                    "original_filename": uploaded_file.name,
-                                    "total_chunks": len(chunks),
-                                    "owner": st.session_state.username,
-                                    "chunks": []
-                                }
-                                
-                                for i, chunk in enumerate(chunks):
-                                    chunk_name = f"{uploaded_file.name}.part{i+1:04}"
-                                    chunk_path = os.path.join(peer.shared_dir, chunk_name)
-                                    
-                                    with open(chunk_path, 'wb') as cf:
-                                        cf.write(chunk)
-                                        
-                                    manifest['chunks'].append({
-                                        "chunk_name": chunk_name,
-                                        "sha256": hashlib.sha256(chunk).hexdigest()
-                                    })
-                                
-                                manifest_path = os.path.join(peer.shared_dir, f"{uploaded_file.name}.manifest")
-                                with open(manifest_path, 'w') as mf:
-                                    json.dump(manifest, mf)
-                                os.remove(temp_path)
-                                st.success(f"File shared successfully: {uploaded_file.name}")
-                                logger.info(f"File shared successfully: {uploaded_file.name} ({len(chunks)} chunks)")
+                            # Call the new upload_file method
+                            success, message = peer.upload_file(uploaded_file)
+                            
+                            if success:
+                                st.success(message)
+                                logger.info(f"File shared successfully: {uploaded_file.name}")
                                 time.sleep(1)
                                 st.rerun()
-                            except Exception as e:
-                                st.error(f"Error sharing file: {str(e)}")
-                                logger.error(f"Error sharing file {uploaded_file.name}: {str(e)}")
+                            else:
+                                st.error(message)
+                                logger.error(f"Error sharing file: {message}")
                     else:
                         st.success("Already shared")
                         logger.debug(f"File '{uploaded_file.name}' already shared")
@@ -739,10 +785,11 @@ elif st.session_state.authenticated:
                         
                         for manifest_file in manifest_files:
                             original_name = manifest_file[:-9]
-                            cols = st.columns([2,1])
+                            cols = st.columns([1,1])
                             with cols[0]:
                                 st.markdown(f"**{original_name}**")
                             with cols[1]:
+
                                 if st.button("⬇️ Download", key=f"dl_{peer_id}_{original_name}"):
                                     dl_status = st.empty()
                                     progress_bar = st.progress(0)
@@ -772,24 +819,26 @@ elif st.session_state.authenticated:
                                         
                                         dl_status.markdown(f"📡 Downloading {total_chunks} chunks...")
                                         
+# Update the chunk processing loop with integrity visualization
+
                                         for idx, chunk in enumerate(manifest['chunks']):
                                             status_container.markdown(f"Chunk {idx+1}/{total_chunks}")
-                                            
+                                            status_placeholder = st.empty()
                                             def update_progress(p):
                                                 overall = int(((downloaded_chunks + (p/100)) / total_chunks) * 100)
                                                 progress_bar.progress(overall)
-                                            
+                                                with st.spinner(f"Downloading chunk {idx+1} ({p}%)..."):
+                                                    pass
+
+                                            # Download the chunk
                                             success = peer.download_file(
                                                 peer_data['address'],
                                                 chunk['chunk_name'],
+                                                expected_hash=chunk['sha256'],
                                                 progress_callback=update_progress
                                             )
-                                            
-                                            if not success:
-                                                all_success = False
-                                                st.error(f"Failed chunk: {chunk['chunk_name']}")
-                                                break
-                                            
+
+                                            # Verify checksum again for UI display
                                             chunk_path = os.path.join(
                                                 peer.download_dir,
                                                 peer_data['address'].replace(':', '_'),
@@ -797,16 +846,38 @@ elif st.session_state.authenticated:
                                             )
                                             with open(chunk_path, 'rb') as cf:
                                                 data = cf.read()
-                                                checksum = hashlib.sha256(data).hexdigest()
-                                                if checksum != chunk['sha256']:
-                                                    all_success = False
-                                                    os.remove(chunk_path)
-                                                    st.error(f"Checksum failed: {chunk['chunk_name']}")
-                                                    break
-                                            
-                                            downloaded_chunks += 1
-                                            progress_bar.progress(int((downloaded_chunks / total_chunks) * 100))
-                                        
+                                                computed_hash = hashlib.sha256(data).hexdigest()
+
+                                            # Update chunk verification status
+                                            col1_placeholder = st.empty()
+                                            col2_placeholder = st.empty()
+                                            with col1_placeholder.container():
+                                                st.markdown("**Expected Checksum:**")
+                                                st.code(chunk['sha256'][:64])
+                                            with col2_placeholder.container():
+                                                st.markdown("**Computed Checksum:**")
+                                                if computed_hash == chunk['sha256']:
+                                                    st.code(computed_hash[:64])
+                                                    st.success("✅ Hashes match!")
+                                                else:
+                                                    st.error("❌ Hashes mismatch!")
+                                                    st.code(computed_hash[:64])
+                                            time.sleep(0.2)  # Small delay before processing the next chunk
+                                            # Clear the previous status before processing the next chunk
+                                            col1_placeholder.empty()
+                                            col2_placeholder.empty()
+
+                                            if computed_hash != chunk['sha256']:
+                                                all_success = False
+                                                os.remove(chunk_path)
+                                                status_placeholder.error("❌ Verification failed")
+                                                break
+                                            else:
+                                                status_placeholder.success("✅ Verified")
+                                                downloaded_chunks += 1
+                                                progress_bar.progress(int((downloaded_chunks / total_chunks) * 100))
+                                            status_placeholder.empty()
+
                                         if all_success:
                                             dl_status.markdown("🔧 Reassembling file...")
                                             output_path = os.path.join(
@@ -814,23 +885,52 @@ elif st.session_state.authenticated:
                                                 peer_data['address'].replace(':', '_'),
                                                 manifest['original_filename']
                                             )
+                                            
+                                            # Sort chunks numerically by their part number
+                                            sorted_chunks = sorted(manifest['chunks'], 
+                                                                key=lambda x: int(x['chunk_name'].split('.part')[-1]))
+                                            
                                             with open(output_path, 'wb') as out_file:
-                                                for chunk in sorted(manifest['chunks'], 
-                                                                key=lambda x: x['chunk_name']):
+                                                for chunk_info in sorted_chunks:
                                                     chunk_path = os.path.join(
                                                         peer.download_dir,
                                                         peer_data['address'].replace(':', '_'),
-                                                        chunk['chunk_name']
+                                                        chunk_info['chunk_name']
                                                     )
                                                     with open(chunk_path, 'rb') as cf:
                                                         out_file.write(cf.read())
                                                     os.remove(chunk_path)
+
+                                            # Calculate the final file checksum
+                                            with open(output_path, 'rb') as f:
+                                                file_hash = hashlib.sha256()
+                                                while chunk := f.read(8192):
+                                                    file_hash.update(chunk)
+                                            file_checksum = file_hash.hexdigest()
+
+                                            dl_status.markdown(f"""
+                                            ### ✅ Download Complete!
+                                            **File integrity verified**  
+                                            Final SHA-256 checksum:  
+                                            `{file_checksum}`  
+                                            Saved to: `{output_path}`
+                                            """)
                                             
+                                            # Display download summary directly
+                                            st.markdown("### 📊 Download Summary")
+                                            st.markdown(f"""
+                                            - **Total chunks:** {total_chunks}
+                                            - **Chunk size:** {CHUNK_SIZE // 1024} KB
+                                            - **Verified chunks:** {total_chunks}/{total_chunks}
+                                            - **Final file size:** {os.path.getsize(output_path) // 1024} KB
+                                            - **Final SHA-256:** `{file_checksum}`
+                                            """)
+                                                        
                                             os.remove(manifest_path)
                                             progress_bar.progress(100)
                                             dl_status.markdown(f"✅ Saved to: {output_path}")
                                             logger.info(f"File download complete: {original_name}")
-                                            time.sleep(2)
+                                            time.sleep(3)
                                             st.rerun()
                                         else:
                                             progress_bar.empty()
@@ -861,13 +961,46 @@ elif st.session_state.authenticated:
             if not downloaded_files:
                 st.info("No downloads yet")
             else:
+                # In the downloaded files section (around line 1512):
                 for file in downloaded_files:
+                    file_path = os.path.join(peer.download_dir, file['source'].replace(':', '_'), file['name'])
                     with st.container():
-                        cols = st.columns([3, 1])
+                        cols = st.columns([3, 1.5, 1])
                         with cols[0]:
                             st.subheader(file['name'])
                             st.caption(f"Source: {file['source']}")
+                            
+                            # Calculate file checksum on hover
+                            with st.expander("Verify Integrity Now"):
+                                if os.path.exists(file_path):
+                                    with st.spinner("Calculating checksum..."):
+                                        file_hash = hashlib.sha256()
+                                        file_size = os.path.getsize(file_path)
+                                        last_modified = datetime.fromtimestamp(os.path.getmtime(file_path))
+                                        with open(file_path, 'rb') as f:
+                                            while chunk := f.read(8192):
+                                                file_hash.update(chunk)
+                                        st.markdown(f"""
+                                        **File Details:**  
+                                        - **Name:** {file['name']}  
+                                        - **Source:** {file['source']}  
+                                        - **Size:** {file_size / 1024:.2f} KB  
+                                        - **Last Modified:** {last_modified}  
+
+                                        **Integrity Check:**  
+                                        - **SHA-256 Checksum:**  
+                                        `{file_hash.hexdigest()}`
+                                        """)
+                                else:
+                                    st.warning("File not found")
+                        
                         with cols[1]:
+                            st.markdown("**Integrity Status**")
+                            if os.path.exists(file_path):
+                                st.success("✅ Verified (on download)")
+                            else:
+                                st.error("❌ File missing")
+                        with cols[2]:
                             if st.button("Delete", key=f"delete_{file['name']}"):
                                 file_path = os.path.join(peer.download_dir, file['source'].replace(':', '_'), file['name'])
                                 if os.path.exists(file_path):
