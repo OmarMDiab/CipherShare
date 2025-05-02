@@ -318,31 +318,6 @@ class PeerNode:
             return False
 
 
-        #     # 4. Decrypt and verify final integrity
-        #     decrypted_data = self._decrypt_data(
-        #         encrypted_data=bytes(encrypted_data),
-        #         iv=iv,
-        #         expected_hash=original_hash
-        #     )
-
-        # # 5. Save decrypted file
-        #     with open(dest_path, 'wb') as f:
-        #         f.write(decrypted_data)
-
-        #     logger.info(f"Successfully downloaded and verified: {original_filename}")
-        #     return True
-
-        # except SecurityError as se:
-        #     logger.error(f"Security violation: {str(se)}")
-        #     if dest_path and os.path.exists(dest_path):
-        #         os.remove(dest_path)
-        #     return False
-        # except Exception as e:
-        #     logger.error(f"Download failed: {str(e)}")
-        #     if dest_path and os.path.exists(dest_path):
-        #         os.remove(dest_path)
-        #     return False
-
     def _decrypt_data(self, encrypted_data, iv, expected_hash):
         """Decrypt data and verify against original hash."""
         try:
@@ -826,10 +801,15 @@ elif st.session_state.authenticated:
                 for file_info in shared_files:
                     cols = st.columns([4,1])
                     with cols[0]:
-                        st.markdown(f"""
-                        **{file_info['original']}**  
-                        Chunks: {len(file_info['chunks'])}
-                        """)
+                        with st.expander(f"Details for {file_info['original']}"):
+                            st.markdown(f"""
+                            **{file_info['original']}**  
+                            Chunks: {len(file_info['chunks'])}  
+                            **Encryption Details: -**  
+                            - **Algorithm:** AES-256-CBC  
+                            - **Key Length:** 256 bits  
+                            - **IV Length:** 128 bits  
+                            """)
                     with cols[1]:
                         if st.button(f"❌ Stop", key=f"unshare_{file_info['original']}"):
                             try:
