@@ -14,6 +14,9 @@ import secrets
 import logging
 import uuid
 from datetime import datetime, timedelta
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.primitives import padding
+from cryptography.hazmat.backends import default_backend
 
 # Configuration
 RENDEZVOUS_SERVER = "http://localhost:5001"
@@ -98,7 +101,15 @@ class P2PRequestHandler(SimpleHTTPRequestHandler):
         # Continue with the regular file handling
         super().do_GET()
 
+
+class SecurityError(Exception):
+    def __init__(self, message="Security violation detected"):
+        self.message = message
+        super().__init__(self.message)
+
 class PeerNode:
+    SYMMETRIC_KEY = b'supersecretkey123456789012345678'
+
     def __init__(self, host, port,username,auth_token):
         """
         Initialize a peer node.
@@ -109,6 +120,8 @@ class PeerNode:
             username: Username associated with this peer
             auth_token: Authentication token for API requests
         """
+        if len(self.SYMMETRIC_KEY) != 32:
+            raise ValueError(f"Invalid AES-256 key length: {len(self.SYMMETRIC_KEY)} bytes")
         self.peer_id = f"{host}_{port}"
         self.host = host
         self.port = port
@@ -304,47 +317,97 @@ class PeerNode:
                 os.remove(dest_path)  # Cleanup on error
             return False
 
-    def upload_file(self, uploaded_file):
-        """Handle file upload and chunking process.
-        
-        Args:
-            uploaded_file: File object to upload
-            
-        Returns:
-            tuple: (success, message)
-        """
+
+        #     # 4. Decrypt and verify final integrity
+        #     decrypted_data = self._decrypt_data(
+        #         encrypted_data=bytes(encrypted_data),
+        #         iv=iv,
+        #         expected_hash=original_hash
+        #     )
+
+        # # 5. Save decrypted file
+        #     with open(dest_path, 'wb') as f:
+        #         f.write(decrypted_data)
+
+        #     logger.info(f"Successfully downloaded and verified: {original_filename}")
+        #     return True
+
+        # except SecurityError as se:
+        #     logger.error(f"Security violation: {str(se)}")
+        #     if dest_path and os.path.exists(dest_path):
+        #         os.remove(dest_path)
+        #     return False
+        # except Exception as e:
+        #     logger.error(f"Download failed: {str(e)}")
+        #     if dest_path and os.path.exists(dest_path):
+        #         os.remove(dest_path)
+        #     return False
+
+    def _decrypt_data(self, encrypted_data, iv, expected_hash):
+        """Decrypt data and verify against original hash."""
         try:
-            temp_path = os.path.join(self.shared_dir, uploaded_file.name)
+            # Initialize cipher
+            cipher = Cipher(
+                algorithms.AES(self.SYMMETRIC_KEY),
+                modes.CBC(iv),
+                backend=default_backend()
+            )
+            decryptor = cipher.decryptor()
             
-            # Save uploaded file temporarily
-            with open(temp_path, 'wb') as f:
-                f.write(uploaded_file.getbuffer())
+            # Decrypt and unpad
+            padded_data = decryptor.update(encrypted_data) + decryptor.finalize()
+            unpadder = padding.PKCS7(128).unpadder()
+            decrypted_data = unpadder.update(padded_data) + unpadder.finalize()
             
-            # Split file into chunks
+            # Verify integrity
+            computed_hash = hashlib.sha256(decrypted_data).digest()
+            if computed_hash != expected_hash:
+                raise SecurityError("File integrity check failed. File may be tampered.")
+                
+            return decrypted_data
+        except ValueError as ve:
+            raise SecurityError(f"Decryption failed: {str(ve)}")
+
+    def upload_file(self, uploaded_file):
+        """Handle file encryption, chunking, and manifest creation."""
+        try:
+            # Read the entire file into memory
+            file_data = uploaded_file.getvalue()
+            
+            # Encrypt the file data
+            encrypted_data, iv, original_hash = self._encrypt_data(file_data)
+            
+            # Split encrypted data into chunks
             chunks = []
-            with open(temp_path, 'rb') as f:
-                while chunk := f.read(CHUNK_SIZE):
-                    chunks.append(chunk)
+            for i in range(0, len(encrypted_data), CHUNK_SIZE):
+                chunk = encrypted_data[i:i+CHUNK_SIZE]
+                chunks.append(chunk)
             
-            # Create manifest structure
+            # Create manifest with encryption metadata
             manifest = {
                 "original_filename": uploaded_file.name,
                 "total_chunks": len(chunks),
                 "owner": self.username,
-                "chunks": []
+                "iv": iv.hex(),  # Store IV as hexadecimal string
+                "original_hash": original_hash.hex(),  # SHA-256 of original file
+                "chunks": [],
+                "encrypted_size": len(encrypted_data),
             }
             
-            # Write chunks and populate manifest
+            # Write encrypted chunks and populate manifest
             for i, chunk in enumerate(chunks):
                 chunk_name = f"{uploaded_file.name}.part{i+1:04}"
                 chunk_path = os.path.join(self.shared_dir, chunk_name)
                 
+                # Write encrypted chunk
                 with open(chunk_path, 'wb') as cf:
                     cf.write(chunk)
                 
+                # Calculate hash of encrypted chunk
+                chunk_hash = hashlib.sha256(chunk).hexdigest()
                 manifest['chunks'].append({
                     "chunk_name": chunk_name,
-                    "sha256": hashlib.sha256(chunk).hexdigest()
+                    "sha256": chunk_hash
                 })
             
             # Write manifest file
@@ -352,17 +415,45 @@ class PeerNode:
             with open(manifest_path, 'w') as mf:
                 json.dump(manifest, mf)
             
-            # Clean up temporary file
-            os.remove(temp_path)
-            
-            # Update rendezvous server with new files
+            # Update rendezvous server
             self.register_with_rendezvous()
             
             return True, f"File shared successfully: {uploaded_file.name}"
-            
+        
         except Exception as e:
-            logger.error(f"Error uploading file: {str(e)}")
-            return False, f"Error sharing file: {str(e)}"
+            logger.error(f"Upload error: {str(e)}")
+            return False, f"Failed to upload file: {str(e)}"
+
+
+    
+    def _encrypt_data(self, data):
+        """Encrypt data using AES-256-CBC with PKCS7 padding.
+        
+        Returns:
+            tuple: (encrypted_bytes, iv, original_hash)
+        """
+        # Generate random initialization vector
+        iv = os.urandom(16)
+            
+        # Create cipher object
+        cipher = Cipher(
+            algorithms.AES(self.SYMMETRIC_KEY),
+            modes.CBC(iv),
+            backend=default_backend()
+            )
+            
+        # Pad data to AES block size (128 bits)
+        padder = padding.PKCS7(128).padder()
+        padded_data = padder.update(data) + padder.finalize()
+            
+        # Encrypt data
+        encryptor = cipher.encryptor()
+        encrypted_data = encryptor.update(padded_data) + encryptor.finalize()
+            
+         # Calculate hash of original data
+        original_hash = hashlib.sha256(data).digest()
+            
+        return encrypted_data, iv, original_hash
 
     def shutdown(self):
         """Shutdown the peer node."""
@@ -890,7 +981,9 @@ elif st.session_state.authenticated:
                                             sorted_chunks = sorted(manifest['chunks'], 
                                                                 key=lambda x: int(x['chunk_name'].split('.part')[-1]))
                                             
-                                            with open(output_path, 'wb') as out_file:
+                                            # First write encrypted chunks to temporary file
+                                            temp_path = output_path + ".encrypted"
+                                            with open(temp_path, 'wb') as out_file:
                                                 for chunk_info in sorted_chunks:
                                                     chunk_path = os.path.join(
                                                         peer.download_dir,
@@ -901,41 +994,58 @@ elif st.session_state.authenticated:
                                                         out_file.write(cf.read())
                                                     os.remove(chunk_path)
 
-                                            # Calculate the final file checksum
-                                            with open(output_path, 'rb') as f:
-                                                file_hash = hashlib.sha256()
-                                                while chunk := f.read(8192):
-                                                    file_hash.update(chunk)
-                                            file_checksum = file_hash.hexdigest()
+                                            # Now decrypt the temporary file
+                                            try:
+                                                with open(temp_path, 'rb') as f:
+                                                    encrypted_data = f.read()
+                                                
+                                                # Get IV and hash from manifest
+                                                iv = bytes.fromhex(manifest['iv'])  # IV stored as hex string
+                                                expected_hash = bytes.fromhex(manifest['original_hash'])  # Hash stored as hex string
 
-                                            dl_status.markdown(f"""
-                                            ### ✅ Download Complete!
-                                            **File integrity verified**  
-                                            Final SHA-256 checksum:  
-                                            `{file_checksum}`  
-                                            Saved to: `{output_path}`
-                                            """)
-                                            
-                                            # Display download summary directly
-                                            st.markdown("### 📊 Download Summary")
-                                            st.markdown(f"""
-                                            - **Total chunks:** {total_chunks}
-                                            - **Chunk size:** {CHUNK_SIZE // 1024} KB
-                                            - **Verified chunks:** {total_chunks}/{total_chunks}
-                                            - **Final file size:** {os.path.getsize(output_path) // 1024} KB
-                                            - **Final SHA-256:** `{file_checksum}`
-                                            """)
-                                                        
-                                            os.remove(manifest_path)
-                                            progress_bar.progress(100)
-                                            dl_status.markdown(f"✅ Saved to: {output_path}")
-                                            logger.info(f"File download complete: {original_name}")
-                                            time.sleep(3)
-                                            st.rerun()
-                                        else:
-                                            progress_bar.empty()
-                                            dl_status.markdown("❌ Download failed")
-                                    
+                                                # Decrypt the data
+                                                decrypted_data = peer._decrypt_data(encrypted_data, iv, expected_hash)
+
+                                                # Write decrypted data to final output
+                                                with open(output_path, 'wb') as f:
+                                                    f.write(decrypted_data)
+
+                                                # Remove temporary encrypted file
+                                                os.remove(temp_path)
+
+                                                # Display success messages
+                                                dl_status.markdown(f"""
+                                                ### ✅ Download Complete!
+                                                **File integrity verified**  
+                                                Final SHA-256 checksum:  
+                                                `{manifest['original_hash']}`  
+                                                Saved to: `{output_path}`
+                                                """)
+                                                
+                                                # Display download summary
+                                                st.markdown("### 📊 Download Summary")
+                                                st.markdown(f"""
+                                                - **Total chunks:** {total_chunks}
+                                                - **Chunk size:** {CHUNK_SIZE // 1024} KB
+                                                - **Verified chunks:** {total_chunks}/{total_chunks}
+                                                - **Final file size:** {os.path.getsize(output_path) // 1024} KB
+                                                - **Final SHA-256:** `{manifest['original_hash']}`
+                                                """)
+                                                            
+                                                os.remove(manifest_path)
+                                                progress_bar.progress(100)
+                                                logger.info(f"File download complete: {original_name}")
+                                                time.sleep(3)
+                                                st.rerun()
+
+                                            except Exception as e:
+                                                progress_bar.empty()
+                                                dl_status.markdown(f"⚠️ Error: {str(e)}")
+                                                # Clean up temporary files if decryption failed
+                                                if os.path.exists(temp_path):
+                                                    os.remove(temp_path)
+                                                if os.path.exists(output_path):
+                                                    os.remove(output_path)
                                     except Exception as e:
                                         progress_bar.empty()
                                         dl_status.markdown(f"⚠️ Error: {str(e)}")
