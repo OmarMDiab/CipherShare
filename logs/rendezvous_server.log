@@ -1,0 +1,88 @@
+2025-05-12 00:20:06,136 - rendezvous_server - INFO - Connected to MongoDB successfully
+2025-05-12 00:20:06,149 - rendezvous_server - INFO - Starting Rendezvous Server on port 5001
+2025-05-12 00:20:06,150 - rendezvous_server - INFO - Cleaned up 2 expired sessions
+2025-05-12 00:20:07,024 - werkzeug - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5001
+ * Running on http://192.168.100.208:5001
+2025-05-12 00:20:07,024 - werkzeug - INFO - [33mPress CTRL+C to quit[0m
+2025-05-12 00:21:29,819 - rendezvous_server - INFO - Previous session for user 'omar' was invalidated
+2025-05-12 00:21:29,820 - rendezvous_server - INFO - Created new session for user 'omar'
+2025-05-12 00:21:29,820 - rendezvous_server - INFO - User 'omar' logged in successfully from IP 127.0.0.1
+2025-05-12 00:21:29,821 - werkzeug - INFO - 127.0.0.1 - - [12/May/2025 00:21:29] "POST /user/login HTTP/1.1" 200 -
+2025-05-12 00:24:30,757 - rendezvous_server - INFO - User 'omar' logged out successfully
+2025-05-12 00:24:30,757 - werkzeug - INFO - 127.0.0.1 - - [12/May/2025 00:24:30] "POST /user/logout HTTP/1.1" 200 -
+2025-05-12 00:24:40,248 - rendezvous_server - INFO - Created new session for user 'omar'
+2025-05-12 00:24:40,248 - rendezvous_server - INFO - User 'omar' logged in successfully from IP 127.0.0.1
+2025-05-12 00:24:40,248 - werkzeug - INFO - 127.0.0.1 - - [12/May/2025 00:24:40] "POST /user/login HTTP/1.1" 200 -
+2025-05-12 00:25:49,259 - rendezvous_server - INFO - Previous session for user 'omar' was invalidated
+2025-05-12 00:25:49,260 - rendezvous_server - INFO - Created new session for user 'omar'
+2025-05-12 00:25:49,261 - rendezvous_server - INFO - User 'omar' logged in successfully from IP 127.0.0.1
+2025-05-12 00:25:49,261 - werkzeug - INFO - 127.0.0.1 - - [12/May/2025 00:25:49] "POST /user/login HTTP/1.1" 200 -
+2025-05-12 00:27:55,153 - rendezvous_server - INFO - Previous session for user 'omar' was invalidated
+2025-05-12 00:27:55,154 - rendezvous_server - INFO - Created new session for user 'omar'
+2025-05-12 00:27:55,154 - rendezvous_server - INFO - User 'omar' logged in successfully from IP 127.0.0.1
+2025-05-12 00:27:55,154 - werkzeug - INFO - 127.0.0.1 - - [12/May/2025 00:27:55] "POST /user/login HTTP/1.1" 200 -
+2025-05-12 00:29:02,721 - rendezvous_server - INFO - Previous session for user 'omar' was invalidated
+2025-05-12 00:29:02,721 - rendezvous_server - INFO - Created new session for user 'omar'
+2025-05-12 00:29:02,722 - rendezvous_server - INFO - User 'omar' logged in successfully from IP 127.0.0.1
+2025-05-12 00:29:02,722 - werkzeug - INFO - 127.0.0.1 - - [12/May/2025 00:29:02] "POST /user/login HTTP/1.1" 200 -
+2025-05-12 00:30:47,621 - rendezvous_server - INFO - Previous session for user 'omar' was invalidated
+2025-05-12 00:30:47,622 - rendezvous_server - INFO - Created new session for user 'omar'
+2025-05-12 00:30:47,623 - rendezvous_server - INFO - User 'omar' logged in successfully from IP 127.0.0.1
+2025-05-12 00:30:47,623 - werkzeug - INFO - 127.0.0.1 - - [12/May/2025 00:30:47] "POST /user/login HTTP/1.1" 200 -
+2025-05-12 00:34:29,762 - rendezvous_server - INFO - Previous session for user 'omar' was invalidated
+2025-05-12 00:34:29,763 - rendezvous_server - INFO - Created new session for user 'omar'
+2025-05-12 00:34:29,763 - rendezvous_server - INFO - User 'omar' logged in successfully from IP 127.0.0.1
+2025-05-12 00:34:29,763 - werkzeug - INFO - 127.0.0.1 - - [12/May/2025 00:34:29] "POST /user/login HTTP/1.1" 200 -
+2025-05-12 00:34:49,700 - rendezvous_server - INFO - User 'omar' logged out successfully
+2025-05-12 00:34:49,700 - werkzeug - INFO - 127.0.0.1 - - [12/May/2025 00:34:49] "POST /user/logout HTTP/1.1" 200 -
+2025-05-12 00:36:49,349 - rendezvous_server - INFO - Created new session for user 'omar'
+2025-05-12 00:36:49,350 - rendezvous_server - INFO - User 'omar' logged in successfully from IP 127.0.0.1
+2025-05-12 00:36:49,350 - werkzeug - INFO - 127.0.0.1 - - [12/May/2025 00:36:49] "POST /user/login HTTP/1.1" 200 -
+2025-05-12 00:47:31,246 - rendezvous_server - INFO - Previous session for user 'omar' was invalidated
+2025-05-12 00:47:31,246 - rendezvous_server - INFO - Created new session for user 'omar'
+2025-05-12 00:47:31,247 - rendezvous_server - INFO - User 'omar' logged in successfully from IP 127.0.0.1
+2025-05-12 00:47:31,247 - werkzeug - INFO - 127.0.0.1 - - [12/May/2025 00:47:31] "POST /user/login HTTP/1.1" 200 -
+2025-05-12 00:48:53,541 - rendezvous_server - INFO - Previous session for user 'omar' was invalidated
+2025-05-12 00:48:53,542 - rendezvous_server - INFO - Created new session for user 'omar'
+2025-05-12 00:48:53,542 - rendezvous_server - INFO - User 'omar' logged in successfully from IP 127.0.0.1
+2025-05-12 00:48:53,543 - werkzeug - INFO - 127.0.0.1 - - [12/May/2025 00:48:53] "POST /user/login HTTP/1.1" 200 -
+2025-05-12 00:49:03,534 - rendezvous_server - INFO - User 'omar' logged out successfully
+2025-05-12 00:49:03,534 - werkzeug - INFO - 127.0.0.1 - - [12/May/2025 00:49:03] "POST /user/logout HTTP/1.1" 200 -
+2025-05-12 00:49:14,047 - rendezvous_server - INFO - Created new session for user 'omar'
+2025-05-12 00:49:14,047 - rendezvous_server - INFO - User 'omar' logged in successfully from IP 127.0.0.1
+2025-05-12 00:49:14,048 - werkzeug - INFO - 127.0.0.1 - - [12/May/2025 00:49:14] "POST /user/login HTTP/1.1" 200 -
+2025-05-12 00:52:13,638 - rendezvous_server - INFO - Previous session for user 'omar' was invalidated
+2025-05-12 00:52:13,639 - rendezvous_server - INFO - Created new session for user 'omar'
+2025-05-12 00:52:13,639 - rendezvous_server - INFO - User 'omar' logged in successfully from IP 127.0.0.1
+2025-05-12 00:52:13,640 - werkzeug - INFO - 127.0.0.1 - - [12/May/2025 00:52:13] "POST /user/login HTTP/1.1" 200 -
+2025-05-12 00:52:31,145 - rendezvous_server - INFO - User 'omar' logged out successfully
+2025-05-12 00:52:31,145 - werkzeug - INFO - 127.0.0.1 - - [12/May/2025 00:52:31] "POST /user/logout HTTP/1.1" 200 -
+2025-05-12 00:52:41,515 - rendezvous_server - INFO - Created new session for user 'omar'
+2025-05-12 00:52:41,515 - rendezvous_server - INFO - User 'omar' logged in successfully from IP 127.0.0.1
+2025-05-12 00:52:41,515 - werkzeug - INFO - 127.0.0.1 - - [12/May/2025 00:52:41] "POST /user/login HTTP/1.1" 200 -
+2025-05-12 00:54:15,700 - rendezvous_server - INFO - Previous session for user 'omar' was invalidated
+2025-05-12 00:54:15,700 - rendezvous_server - INFO - Created new session for user 'omar'
+2025-05-12 00:54:15,701 - rendezvous_server - INFO - User 'omar' logged in successfully from IP 127.0.0.1
+2025-05-12 00:54:15,701 - werkzeug - INFO - 127.0.0.1 - - [12/May/2025 00:54:15] "POST /user/login HTTP/1.1" 200 -
+2025-05-12 00:54:26,927 - rendezvous_server - INFO - User 'omar' logged out successfully
+2025-05-12 00:54:26,928 - werkzeug - INFO - 127.0.0.1 - - [12/May/2025 00:54:26] "POST /user/logout HTTP/1.1" 200 -
+2025-05-12 00:54:37,502 - rendezvous_server - INFO - Created new session for user 'omar'
+2025-05-12 00:54:37,503 - rendezvous_server - INFO - User 'omar' logged in successfully from IP 127.0.0.1
+2025-05-12 00:54:37,503 - werkzeug - INFO - 127.0.0.1 - - [12/May/2025 00:54:37] "POST /user/login HTTP/1.1" 200 -
+2025-05-12 00:56:22,461 - rendezvous_server - INFO - User 'omar' logged out successfully
+2025-05-12 00:56:22,461 - werkzeug - INFO - 127.0.0.1 - - [12/May/2025 00:56:22] "POST /user/logout HTTP/1.1" 200 -
+2025-05-12 00:56:39,375 - rendezvous_server - INFO - Created new session for user 'omar'
+2025-05-12 00:56:39,375 - rendezvous_server - INFO - User 'omar' logged in successfully from IP 127.0.0.1
+2025-05-12 00:56:39,375 - werkzeug - INFO - 127.0.0.1 - - [12/May/2025 00:56:39] "POST /user/login HTTP/1.1" 200 -
+2025-05-12 00:58:02,155 - rendezvous_server - INFO - User 'omar' logged out successfully
+2025-05-12 00:58:02,156 - werkzeug - INFO - 127.0.0.1 - - [12/May/2025 00:58:02] "POST /user/logout HTTP/1.1" 200 -
+2025-05-12 00:58:11,563 - rendezvous_server - INFO - Created new session for user 'omar'
+2025-05-12 00:58:11,563 - rendezvous_server - INFO - User 'omar' logged in successfully from IP 127.0.0.1
+2025-05-12 00:58:11,564 - werkzeug - INFO - 127.0.0.1 - - [12/May/2025 00:58:11] "POST /user/login HTTP/1.1" 200 -
+2025-05-12 00:58:20,725 - rendezvous_server - INFO - User 'omar' logged out successfully
+2025-05-12 00:58:20,725 - werkzeug - INFO - 127.0.0.1 - - [12/May/2025 00:58:20] "POST /user/logout HTTP/1.1" 200 -
+2025-05-12 00:59:29,985 - rendezvous_server - INFO - Created new session for user 'omar'
+2025-05-12 00:59:29,986 - rendezvous_server - INFO - User 'omar' logged in successfully from IP 127.0.0.1
+2025-05-12 00:59:29,986 - werkzeug - INFO - 127.0.0.1 - - [12/May/2025 00:59:29] "POST /user/login HTTP/1.1" 200 -
