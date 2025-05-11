@@ -21,8 +21,11 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives import padding
 from cryptography.hazmat.backends import default_backend
 
+from argon2.low_level import Type, hash_secret_raw
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 import random
-
+import binascii
 # Configuration
 RENDEZVOUS_SERVER = "http://localhost:5001"
 PEERS_ROOT = "peers"
@@ -355,6 +358,7 @@ class PeerNode:
         logger.error(f"Could not retrieve manifest '{manifest_name}' from any available peers")
         return None
 
+    
 
     def download_file(self, peer_address, filename, expected_hash=None, progress_callback=None,add_to_shared=True):
         """Download a file from another peer with integrity verification."""
@@ -653,6 +657,49 @@ def login_user(username, password):
         logger.error(f"Error during login: {str(e)}")
         return False, f"Login error: {str(e)}", None
 
+# Modified encryption/decryption functions with static key (INSECURE!)
+def encrypt_credentials(username, password):
+    """INSECURE! Encrypt credentials using fixed key"""
+    # Fixed encryption parameters (INSECURE!)
+    key = b'supersecretkey123456789012345678'  # Same as PeerNode key
+    iv = os.urandom(16)
+    
+    cipher = Cipher(algorithms.AES(key), modes.CBC(iv), backend=default_backend())
+    encryptor = cipher.encryptor()
+
+    data = json.dumps({'username': username, 'password': password}).encode()
+    padder = padding.PKCS7(128).padder()
+    padded_data = padder.update(data) + padder.finalize()
+
+    ciphertext = encryptor.update(padded_data) + encryptor.finalize()
+
+    return json.dumps({
+        'iv': iv.hex(),
+        'ciphertext': ciphertext.hex()
+    }).encode()
+
+def decrypt_credentials(file_data):
+    """INSECURE! Decrypt credentials using fixed key"""
+    try:
+        encrypted_file = json.loads(file_data.decode())
+        iv = bytes.fromhex(encrypted_file['iv'])
+        ciphertext = bytes.fromhex(encrypted_file['ciphertext'])
+        
+        # Use fixed key (INSECURE!)
+        key = b'supersecretkey123456789012345678'
+        
+        cipher = Cipher(algorithms.AES(key), modes.CBC(iv), backend=default_backend())
+        decryptor = cipher.decryptor()
+        padded_data = decryptor.update(ciphertext) + decryptor.finalize()
+        
+        unpadder = padding.PKCS7(128).unpadder()
+        data = unpadder.update(padded_data) + unpadder.finalize()
+        
+        credentials = json.loads(data.decode())
+        return credentials['username'], credentials['password']
+    except Exception as e:
+        raise SecurityError(f"Decryption failed: {str(e)}")
+        
 def logout_user(token):
     """
     Log out a user by invalidating their session.
@@ -710,6 +757,12 @@ if 'token' not in st.session_state:
 if 'auth_error' not in st.session_state:
     st.session_state.auth_error = None
 
+if 'prompt_download' not in st.session_state:
+    st.session_state.prompt_download = False
+
+if 'encrypted_credentials' not in st.session_state:
+    st.session_state.encrypted_credentials = None
+
 # Check for session expiry or other auth errors
 if st.session_state.auth_error and st.session_state.authenticated:
     st.error(st.session_state.auth_error)
@@ -741,33 +794,67 @@ if st.session_state.token and not st.session_state.authenticated:
 # Authentication UI
 if not st.session_state.authenticated:
     st.markdown("### 👤 Authentication")
-    
+    success = False
+    token = None
     tab1, tab2 = st.tabs(["Login", "Register"])
     
     with tab1:
-        with st.form("login_form"):
-            username = st.text_input("Username")
-            password = st.text_input("Password", type="password")
-            submit_login = st.form_submit_button("Login")
-            
-            if submit_login:
-                if not username or not password:
-                    st.error("Please enter both username and password")
-                    logger.warning("Login attempt with empty fields")
-                else:
-                    success, message,token = login_user(username, password)
-                    if success and token:
-                        st.session_state.authenticated = True
-                        st.session_state.username = username
-                        st.session_state.token = token
-                        st.success(message)
-                        logger.info(f"User '{username}' logged in successfully")
-                        time.sleep(1)
-                        st.rerun()
+        login_tab, file_login_tab = st.tabs(["Manual Login", "File Login"])
+        
+        with login_tab:
+            with st.form("login_form"):
+                username = st.text_input("Username")
+                password = st.text_input("Password", type="password")
+                submit_login = st.form_submit_button("Login")
+                
+                if submit_login:
+                    if not username or not password:
+                        st.error("Please enter both username and password")
+                        logger.warning("Login attempt with empty fields")
                     else:
-                        st.error(message)
-                        logger.warning(f"Login failed for user '{username}': {message}")
-    
+                        success, message,token = login_user(username, password)
+                        if success and token:
+                            st.session_state.authenticated = True
+                            st.session_state.username = username
+                            st.session_state.token = token
+                            st.success(message)
+                            # Generate encrypted credentials file
+                            encrypted_data = encrypt_credentials(username, password) 
+                            st.session_state.encrypted_credentials = encrypted_data
+                            st.session_state.prompt_download = True
+                            logger.info(f"User '{username}' logged in successfully")
+                            time.sleep(1)
+                            st.rerun()
+                        else:
+                            st.error(message)
+                            logger.warning(f"Login failed for user '{username}': {message}")
+        with file_login_tab:
+            with st.form("file_login_form"):
+                creds_file = st.file_uploader("Upload credentials file", type=["csf"])
+                submit_file_login = st.form_submit_button("Login with File")
+                
+                if submit_file_login:
+                    if not creds_file:
+                        st.error("Please provide a credentials file")
+                    else:
+                        try:
+                            file_data = creds_file.getvalue()
+                            username, password = decrypt_credentials(file_data)
+                            success, message, token = login_user(username, password)
+                            if success and token:
+                                st.session_state.authenticated = True
+                                st.session_state.username = username
+                                st.session_state.token = token
+                                st.success("Logged in successfully!")
+                                time.sleep(1)
+                                st.rerun()
+                            else:
+                                st.error("Invalid credentials in file")
+                        except SecurityError as se:
+                            st.error(str(se))
+                        except Exception as e:
+                            st.error(f"Invalid credentials file: {str(e)}")
+        # After successful manual login:
     
     with tab2:
         with st.form("register_form"):
@@ -799,7 +886,7 @@ if not st.session_state.authenticated:
 
 # Main Application UI (only shown to authenticated users)
 elif st.session_state.authenticated:
-    # Display logged in user in sidebar
+    
     st.sidebar.markdown(f"### 👤 Logged in as: **{st.session_state.username}**")
     
     if st.sidebar.button("Logout"):
@@ -831,6 +918,28 @@ elif st.session_state.authenticated:
     
     # Node initialization        
     if 'peer' not in st.session_state:
+        # Display logged in user in sidebar
+        # print all session state variable
+
+        if st.session_state.get('prompt_download'):
+            st.markdown("---")
+            st.info("### 🔒 Credentials Backup")
+            st.write("Download your encrypted credentials file for easy future logins:")
+            
+            st.download_button(
+                label="Download Credentials File",
+                data=st.session_state.encrypted_credentials,
+                file_name=f"{st.session_state.username}_ciphershare_credentials.csf",
+                mime="application/octet-stream",
+                key="credentials_download"
+            )
+            
+            if st.button("Dismiss", key="dismiss_download"):
+                del st.session_state.prompt_download
+                del st.session_state.encrypted_credentials
+                st.rerun()
+            
+            st.markdown("---")
         st.subheader("Initialize Your Node")
         
         host = socket.gethostbyname(socket.gethostname())
