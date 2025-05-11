@@ -1,3 +1,5 @@
+# rendezvous_server.py -- A simple rendezvous server for peer-to-peer file sharing
+
 from flask import Flask, jsonify, request
 from datetime import datetime, timedelta
 import pymongo
@@ -426,6 +428,27 @@ def verify_session():
         return jsonify({'valid': True, 'username': username})
     else:
         return jsonify({'valid': False, 'message': 'Invalid or expired token'}), 401
+
+# ==============================================================================================
+# Endpoint to find peers with specific files
+@app.route('/peers/<filename>')
+def get_peers_with_file(filename):
+    """Get peers that have a specific file/chunk."""
+    auth_header = request.headers.get('Authorization')
+    if not auth_header or not auth_header.startswith('Bearer '):
+        return jsonify({'status': 'error', 'message': 'Unauthorized'}), 401
+    
+    token = auth_header.split(' ')[1]
+    is_valid, username = validate_session(token)
+    if not is_valid:
+        return jsonify({'status': 'error', 'message': 'Invalid session'}), 401
+
+    matching_peers = {
+        pid: info for pid, info in peers.items() 
+        if filename in info['files']
+    }
+    return jsonify({'peers': matching_peers})
+# ==============================================================================================
 
 # Background task to clean up expired sessions
 def cleanup_expired_sessions():

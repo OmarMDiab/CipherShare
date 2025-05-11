@@ -1,5 +1,8 @@
+# peer.py -- Client-side code for a secure P2P file sharing application using Streamlit and HTTP server
+
 import streamlit as st
 import os
+import shutil
 import threading
 import requests
 import socket
@@ -17,6 +20,8 @@ from datetime import datetime, timedelta
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives import padding
 from cryptography.hazmat.backends import default_backend
+
+import random
 
 # Configuration
 RENDEZVOUS_SERVER = "http://localhost:5001"
@@ -230,9 +235,29 @@ class PeerNode:
                     logger.warning(f"Heartbeat failed: {response.status_code}")
             except Exception as e:
                 logger.error(f"Heartbeat error: {str(e)}")
+# ===========================================================================================
+# p2p getting shared files meta data!
+
+    # def get_shared_files(self):
+    #     return [f for f in os.listdir(self.shared_dir) if f.endswith('.manifest')]
 
     def get_shared_files(self):
-        return [f for f in os.listdir(self.shared_dir) if f.endswith('.manifest')]
+        """Return all files in shared directory (both chunks and manifests)."""
+        return os.listdir(self.shared_dir)
+
+    def get_peers_with_file(self, filename):
+        """Query rendezvous server for peers having specific file."""
+        try:
+            headers = {"Authorization": f"Bearer {self.auth_token}"}
+            response = requests.get(
+                f"{RENDEZVOUS_SERVER}/peers/{filename}",
+                headers=headers,
+                timeout=2
+            )
+            return response.json().get('peers', {}) if response.ok else {}
+        except Exception as e:
+            return {}
+# ===========================================================================================
 
     def get_peers(self):
         try:
@@ -264,18 +289,20 @@ class PeerNode:
     def download_file(self, peer_address, filename, expected_hash=None, progress_callback=None):
         """Download a file from another peer with integrity verification."""
         try:
-            host, port = peer_address.split(':')
+            host, port = peer_address.split('_')
             url = f"http://{host}:{port}/{filename}"
             headers = {'Authorization': f'Bearer {self.auth_token}'}
-            
+        
+
+
             logger.info(f"Downloading {filename} from {peer_address}")
             response = requests.get(url, stream=True, timeout=10, headers=headers)
-            
+            print(f"response: {response}")
             if response.status_code == 200:
-                peer_dir = os.path.join(self.download_dir, peer_address.replace(':', '_'))
-                os.makedirs(peer_dir, exist_ok=True)
-                dest_path = os.path.join(peer_dir, filename)
-                
+                # peer_dir = os.path.join(self.download_dir, peer_address.replace(':', '_'))
+                # os.makedirs(peer_dir, exist_ok=True)
+                # dest_path = os.path.join(peer_dir, filename)
+                dest_path = os.path.join(self.download_dir, filename)
                 total_size = int(response.headers.get('content-length', 0))
                 downloaded = 0
                 sha256 = hashlib.sha256()  # Initialize hash object
@@ -298,7 +325,12 @@ class PeerNode:
                         os.remove(dest_path)  # Remove corrupted file
                         return False
                     
-                logger.info(f"Download complete: {filename}")                
+                logger.info(f"Download complete: {filename}")
+
+                # Save directly to shared directory
+                share_path = os.path.join(self.shared_dir, filename)
+                shutil.copy(dest_path, share_path)
+
                 return True
                 
             elif response.status_code in (401, 403):
@@ -756,7 +788,7 @@ elif st.session_state.authenticated:
                         'manifest': manifest,
                         'chunks': [chunk['chunk_name'] for chunk in data['chunks']]
                     })
-            except:
+            except Exception as e:
                 logger.error(f"Error reading manifest {manifest}: {str(e)}")
         
         # File upload section in sidebar
@@ -801,6 +833,7 @@ elif st.session_state.authenticated:
                 for file_info in shared_files:
                     cols = st.columns([4,1])
                     with cols[0]:
+                        st.markdown(f"**{shared_files.index(file_info) + 1}. {file_info['original']}** ")
                         with st.expander(f"Details for {file_info['original']}"):
                             st.markdown(f"""
                             **{file_info['original']}**  
@@ -839,196 +872,245 @@ elif st.session_state.authenticated:
             st.subheader("🌐 Network Files")
             
             peers = peer.get_peers()
+            unique_manifests = {}
+            # st.write(peers)
+            for peer_id, peer_data in peers.items():
+                # if peer_id == peer.peer_id:
+                #     continue
+                manifest_files = [f for f in peer_data.get('files', []) if f.endswith('.manifest')]
+                for manifest in manifest_files:
+                    if manifest not in unique_manifests:
+                        unique_manifests[manifest] = []
+                    unique_manifests[manifest].append({
+                        "peer_id": peer_id,
+                        "username": peer_data.get('username', 'Unknown')
+                    })
+
+            # st.write(unique_manifests)
             
             if not peers:
                 st.info("No peers found")
             else:
-                for peer_id, peer_data in peers.items():
-                    if peer_id == peer.peer_id:
-                        continue
-                    
-                    with st.expander(f"👤 User: {peer_data.get('username', 'Unknown')} ({peer_id})"):
-                        manifest_files = [f for f in peer_data.get('files', []) 
-                                        if f.endswith('.manifest')]
-                        if not manifest_files:
-                            st.write("No files shared")
-                            continue
+                for manifest_file, file_sharers in unique_manifests.items():
+                    # if peer_id == peer.peer_id:
+                    #     continue
+                    original_name = manifest_file[:-9]  # Remove ".manifest" suffix
+                    peers_with_file = peer.get_peers_with_file(manifest_file)
+                    file_exists = False
+                    if peer.peer_id in peers_with_file:
+                            file_exists = True
+                    with st.expander(f"**📁 {original_name} ({len(file_sharers)} sharers)**"):
+                        # manifest_files = [f for f in peer_data.get('files', []) 
+                        #                 if f.endswith('.manifest')]
+
+                        # if not manifest_files:
+                        #     st.write("No files shared")
+                        #     continue
                         
-                        for manifest_file in manifest_files:
-                            original_name = manifest_file[:-9]
+                            # file sharers usernames
+                            usernames = [sharer['username'] for sharer in file_sharers]
+                            peer_ids = [sharer['peer_id'] for sharer in file_sharers]
+
                             cols = st.columns([1,1])
                             with cols[0]:
-                                st.markdown(f"**{original_name}**")
+                                st.markdown("**File Sharers:**")
+                                for idx, (peer_id, username) in enumerate(zip(peer_ids, usernames)):
+                                    if peer_id == peer.peer_id:
+                                        st.markdown(f"{idx+1}. {username} ({peer_id}) **[You]**")
+                                    else:
+                                        st.markdown(f"{idx+1}. {username} ({peer_id})")
+                            
                             with cols[1]:
-
-                                if st.button("⬇️ Download", key=f"dl_{peer_id}_{original_name}"):
-                                    dl_status = st.empty()
-                                    progress_bar = st.progress(0)
-                                    status_container = st.empty()
-                                    
-                                    try:
-                                        dl_status.markdown("📥 Downloading manifest...")
-                                        manifest_downloaded = peer.download_file(
-                                            peer_data['address'], manifest_file)
+                                if file_exists:
+                                    st.success("File are already a sharer")
+                                else:
+                                    if st.button("⬇️ Download", key=f"dl_{peer_id}_{original_name}"):
+                                        dl_status = st.empty()
+                                        progress_bar = st.progress(0)
+                                        status_container = st.empty()
                                         
-                                        if not manifest_downloaded:
-                                            st.error("Manifest download failed")
-                                            continue
+                                        try:
+                                            dl_status.markdown("📥 Downloading manifest...")
+                                            manifest_downloaded = peer.download_file(
+                                                peer_ids[0], manifest_file)
 
-                                        manifest_path = os.path.join(
-                                            peer.download_dir,
-                                            peer_data['address'].replace(':', '_'),
-                                            manifest_file
-                                        )
-                                        
-                                        with open(manifest_path, 'r') as f:
-                                            manifest = json.load(f)
-                                        
-                                        total_chunks = len(manifest['chunks'])
-                                        downloaded_chunks = 0
-                                        all_success = True
-                                        
-                                        dl_status.markdown(f"📡 Downloading {total_chunks} chunks...")
-                                        
-# Update the chunk processing loop with integrity visualization
+                                            if not manifest_downloaded:
+                                                st.error("Manifest download failed")
+                                                continue
 
-                                        for idx, chunk in enumerate(manifest['chunks']):
-                                            status_container.markdown(f"Chunk {idx+1}/{total_chunks}")
-                                            status_placeholder = st.empty()
-                                            def update_progress(p):
-                                                overall = int(((downloaded_chunks + (p/100)) / total_chunks) * 100)
-                                                progress_bar.progress(overall)
-                                                with st.spinner(f"Downloading chunk {idx+1} ({p}%)..."):
-                                                    pass
-
-                                            # Download the chunk
-                                            success = peer.download_file(
-                                                peer_data['address'],
-                                                chunk['chunk_name'],
-                                                expected_hash=chunk['sha256'],
-                                                progress_callback=update_progress
-                                            )
-
-                                            # Verify checksum again for UI display
-                                            chunk_path = os.path.join(
+                                            manifest_path = os.path.join(
                                                 peer.download_dir,
-                                                peer_data['address'].replace(':', '_'),
-                                                chunk['chunk_name']
+                                                # peer_data['address'].replace(':', '_'),
+                                                manifest_file
                                             )
-                                            with open(chunk_path, 'rb') as cf:
-                                                data = cf.read()
-                                                computed_hash = hashlib.sha256(data).hexdigest()
-
-                                            # Update chunk verification status
-                                            col1_placeholder = st.empty()
-                                            col2_placeholder = st.empty()
-                                            with col1_placeholder.container():
-                                                st.markdown("**Expected Checksum:**")
-                                                st.code(chunk['sha256'][:64])
-                                            with col2_placeholder.container():
-                                                st.markdown("**Computed Checksum:**")
-                                                if computed_hash == chunk['sha256']:
-                                                    st.code(computed_hash[:64])
-                                                    st.success("✅ Hashes match!")
-                                                else:
-                                                    st.error("❌ Hashes mismatch!")
-                                                    st.code(computed_hash[:64])
-                                            time.sleep(0.2)  # Small delay before processing the next chunk
-                                            # Clear the previous status before processing the next chunk
-                                            col1_placeholder.empty()
-                                            col2_placeholder.empty()
-
-                                            if computed_hash != chunk['sha256']:
-                                                all_success = False
-                                                os.remove(chunk_path)
-                                                status_placeholder.error("❌ Verification failed")
-                                                break
-                                            else:
-                                                status_placeholder.success("✅ Verified")
-                                                downloaded_chunks += 1
-                                                progress_bar.progress(int((downloaded_chunks / total_chunks) * 100))
-                                            status_placeholder.empty()
-
-                                        if all_success:
-                                            dl_status.markdown("🔧 Reassembling file...")
-                                            output_path = os.path.join(
-                                                peer.download_dir,
-                                                peer_data['address'].replace(':', '_'),
-                                                manifest['original_filename']
-                                            )
+                                            with open(manifest_path, 'r') as f:
+                                                manifest = json.load(f)
                                             
-                                            # Sort chunks numerically by their part number
-                                            sorted_chunks = sorted(manifest['chunks'], 
-                                                                key=lambda x: int(x['chunk_name'].split('.part')[-1]))
+                                            total_chunks = len(manifest['chunks'])
+                                            downloaded_chunks = 0
+                                            all_success = True
                                             
-                                            # First write encrypted chunks to temporary file
-                                            temp_path = output_path + ".encrypted"
-                                            with open(temp_path, 'wb') as out_file:
-                                                for chunk_info in sorted_chunks:
-                                                    chunk_path = os.path.join(
-                                                        peer.download_dir,
-                                                        peer_data['address'].replace(':', '_'),
-                                                        chunk_info['chunk_name']
+                                            dl_status.markdown(f"📡 Downloading {total_chunks} chunks...")
+
+
+                                            for idx, chunk in enumerate(manifest['chunks']):
+
+                                                status_container.markdown(f"Chunk {idx+1}/{total_chunks}")
+                                                status_placeholder = st.empty()
+
+                                                def update_progress(p):
+                                                    overall = int(((downloaded_chunks + (p/100)) / total_chunks) * 100)
+                                                    progress_bar.progress(overall)
+                                                    with st.spinner(f"Downloading chunk {idx+1} ({p}%)..."):
+                                                        pass
+
+                                                # Select a random peer with this chunk
+                                                selected_peer = random.choice(file_sharers)
+                                                # st.write(f"peerid: {selected_peer['peer_id']}")
+                                                # delay
+                                                # time.sleep(2)
+                                                # Download the chunk
+                                                with st.spinner(f"Downloading chunk from {selected_peer['username']}..."):
+                                                    success = peer.download_file(
+                                                        selected_peer['peer_id'],
+                                                        chunk['chunk_name'],
+                                                        expected_hash=chunk['sha256'],
+                                                        progress_callback=update_progress
                                                     )
-                                                    with open(chunk_path, 'rb') as cf:
-                                                        out_file.write(cf.read())
+                                                    time.sleep(1)
+
+
+                                                # Verify checksum again for UI display
+                                                chunk_path = os.path.join(
+                                                    peer.download_dir,
+                                                    # peer_data['address'].replace(':', '_'),
+                                                    chunk['chunk_name']
+                                                )
+                                                with open(chunk_path, 'rb') as cf:
+                                                    data = cf.read()
+                                                    computed_hash = hashlib.sha256(data).hexdigest()
+
+                                                # Update chunk verification status
+                                                col1_placeholder = st.empty()
+                                                col2_placeholder = st.empty()
+                                                with col1_placeholder.container():
+                                                    st.markdown("**Expected Checksum:**")
+                                                    st.code(chunk['sha256'][:64])
+                                                with col2_placeholder.container():
+                                                    st.markdown("**Computed Checksum:**")
+                                                    if computed_hash == chunk['sha256']:
+                                                        st.code(computed_hash[:64])
+                                                        st.success("✅ Hashes match!")
+                                                    else:
+                                                        st.error("❌ Hashes mismatch!")
+                                                        st.code(computed_hash[:64])
+                                                #time.sleep(1)  # Small delay before processing the next chunk
+                                                # Clear the previous status before processing the next chunk
+                                                col1_placeholder.empty()
+                                                col2_placeholder.empty()
+
+                                                if computed_hash != chunk['sha256']:
+                                                    all_success = False
                                                     os.remove(chunk_path)
+                                                    status_placeholder.error("❌ Verification failed")
+                                                    break
+                                                else:
+                                                    status_placeholder.success("✅ Verified")
+                                                    downloaded_chunks += 1
+                                                    progress_bar.progress(int((downloaded_chunks / total_chunks) * 100))
+                                                status_placeholder.empty()
 
-                                            # Now decrypt the temporary file
-                                            try:
-                                                with open(temp_path, 'rb') as f:
-                                                    encrypted_data = f.read()
+                                            if all_success:
+                                                dl_status.markdown("🔧 Reassembling file...")
+                                                output_path = os.path.join(
+                                                    peer.download_dir,
+                                                    # peer_data['address'].replace(':', '_'),
+                                                    manifest['original_filename']
+                                                )
                                                 
-                                                # Get IV and hash from manifest
-                                                iv = bytes.fromhex(manifest['iv'])  # IV stored as hex string
-                                                expected_hash = bytes.fromhex(manifest['original_hash'])  # Hash stored as hex string
+                                                # Sort chunks numerically by their part number
+                                                sorted_chunks = sorted(manifest['chunks'], 
+                                                                    key=lambda x: int(x['chunk_name'].split('.part')[-1]))
 
-                                                # Decrypt the data
-                                                decrypted_data = peer._decrypt_data(encrypted_data, iv, expected_hash)
+                                                # First write encrypted chunks to temporary file
+                                                temp_path = output_path + ".encrypted"
+                                                with open(temp_path, 'wb') as out_file:
+                                                    for chunk_info in sorted_chunks:
+                                                        chunk_path = os.path.join(
+                                                            peer.download_dir,
+                                                            # peer_data['address'].replace(':', '_'),
+                                                            chunk_info['chunk_name']
+                                                        )
+                                                        # Save a copy of the encrypted chunk to shared_dir
+                                                        shared_chunk_path = os.path.join(peer.shared_dir, chunk_info['chunk_name'])
+                                                        shutil.copy(chunk_path, shared_chunk_path)
 
-                                                # Write decrypted data to final output
-                                                with open(output_path, 'wb') as f:
-                                                    f.write(decrypted_data)
+                                                        with open(chunk_path, 'rb') as cf:
+                                                            out_file.write(cf.read())
 
-                                                # Remove temporary encrypted file
-                                                os.remove(temp_path)
+                                                        os.remove(chunk_path)
 
-                                                # Display success messages
-                                                dl_status.markdown(f"""
-                                                ### ✅ Download Complete!
-                                                **File integrity verified**  
-                                                Final SHA-256 checksum:  
-                                                `{manifest['original_hash']}`  
-                                                Saved to: `{output_path}`
-                                                """)
-                                                
-                                                # Display download summary
-                                                st.markdown("### 📊 Download Summary")
-                                                st.markdown(f"""
-                                                - **Total chunks:** {total_chunks}
-                                                - **Chunk size:** {CHUNK_SIZE // 1024} KB
-                                                - **Verified chunks:** {total_chunks}/{total_chunks}
-                                                - **Final file size:** {os.path.getsize(output_path) // 1024} KB
-                                                - **Final SHA-256:** `{manifest['original_hash']}`
-                                                """)
-                                                            
-                                                os.remove(manifest_path)
-                                                progress_bar.progress(100)
-                                                logger.info(f"File download complete: {original_name}")
-                                                time.sleep(3)
-                                                st.rerun()
+                                                # Save the manifest file to the shared directory
+                                                shared_manifest_path = os.path.join(peer.shared_dir, manifest_file)
+                                                shutil.copy(manifest_path, shared_manifest_path)
 
-                                            except Exception as e:
-                                                progress_bar.empty()
-                                                dl_status.markdown(f"⚠️ Error: {str(e)}")
-                                                # Clean up temporary files if decryption failed
-                                                if os.path.exists(temp_path):
+                                                # Now decrypt the temporary file
+                                                try:
+                                                    with open(temp_path, 'rb') as f:
+                                                        encrypted_data = f.read()
+                                                    
+                                                    # Get IV and hash from manifest
+                                                    iv = bytes.fromhex(manifest['iv'])  # IV stored as hex string
+                                                    expected_hash = bytes.fromhex(manifest['original_hash'])  # Hash stored as hex string
+
+                                                    # Decrypt the data
+                                                    decrypted_data = peer._decrypt_data(encrypted_data, iv, expected_hash)
+
+                                                    # Write decrypted data to final output
+                                                    with open(output_path, 'wb') as f:
+                                                        f.write(decrypted_data)
+
+                                                    # Remove temporary encrypted file
                                                     os.remove(temp_path)
-                                                if os.path.exists(output_path):
-                                                    os.remove(output_path)
-                                    except Exception as e:
-                                        progress_bar.empty()
-                                        dl_status.markdown(f"⚠️ Error: {str(e)}")
+
+                                                    # Display success messages
+                                                    dl_status.markdown(f"""
+                                                    ### ✅ Download Complete!
+                                                    **File integrity verified**  
+                                                    Final SHA-256 checksum:  
+                                                    `{manifest['original_hash']}`  
+                                                    Saved to: `{output_path}`
+                                                    """)
+                                                    
+                                                    # Display download summary
+                                                    st.markdown("### 📊 Download Summary")
+                                                    st.markdown(f"""
+                                                    - **Total chunks:** {total_chunks}
+                                                    - **Chunk size:** {CHUNK_SIZE // 1024} KB
+                                                    - **Verified chunks:** {total_chunks}/{total_chunks}
+                                                    - **Final file size:** {os.path.getsize(output_path) // 1024} KB
+                                                    - **Final SHA-256:** `{manifest['original_hash']}`
+                                                    """)
+
+
+                                                    os.remove(manifest_path)
+                                                    progress_bar.progress(100)
+                                                    logger.info(f"File download complete: {original_name}")
+                                                    peer.register_with_rendezvous()                
+                                                    time.sleep(3)
+                                                    st.rerun()
+
+                                                except Exception as e:
+                                                    progress_bar.empty()
+                                                    dl_status.markdown(f"⚠️ Error: {str(e)}")
+                                                    # Clean up temporary files if decryption failed
+                                                    if os.path.exists(temp_path):
+                                                        os.remove(temp_path)
+                                                    if os.path.exists(output_path):
+                                                        os.remove(output_path)
+                                        except Exception as e:
+                                            progress_bar.empty()
+                                            dl_status.markdown(f"⚠️ Error: {str(e)}")
             if st.button("Rendezvous Discovery!", key="refresh_network_files", help="Click to refresh network files"):
                 st.rerun()
 
@@ -1038,27 +1120,23 @@ elif st.session_state.authenticated:
         with st.container():
             st.subheader("📥 Downloaded Files")
             downloaded_files = []
-            for peer_dir in os.listdir(peer.download_dir):
-                peer_path = os.path.join(peer.download_dir, peer_dir)
-                if os.path.isdir(peer_path):
-                    for file in os.listdir(peer_path):
-                        if not (file.endswith('.manifest') or file.endswith('.part')):
-                            downloaded_files.append({
-                                'name': file,
-                                'source': peer_dir.replace('_', ':')
-                            })
+# get usernames except for the current peer usernmae
+            sources = [username for username in usernames if username != peer.username]
+            for file in os.listdir(peer.download_dir):
+                    if not (file.endswith('.manifest') or file.endswith('.part')):
+                        downloaded_files.append(file)
             
             if not downloaded_files:
                 st.info("No downloads yet")
             else:
                 # In the downloaded files section (around line 1512):
                 for file in downloaded_files:
-                    file_path = os.path.join(peer.download_dir, file['source'].replace(':', '_'), file['name'])
+                    file_path = os.path.join(peer.download_dir, file)
                     with st.container():
                         cols = st.columns([3, 1.5, 1])
                         with cols[0]:
-                            st.subheader(file['name'])
-                            st.caption(f"Source: {file['source']}")
+                            st.subheader(file)
+                            st.caption(f"Source: {', '.join(sources)}")
                             
                             # Calculate file checksum on hover
                             with st.expander("Verify Integrity Now"):
@@ -1072,8 +1150,8 @@ elif st.session_state.authenticated:
                                                 file_hash.update(chunk)
                                         st.markdown(f"""
                                         **File Details:**  
-                                        - **Name:** {file['name']}  
-                                        - **Source:** {file['source']}  
+                                        - **Name:** {file}  
+                                        - **Source:** {', '.join(sources)}  
                                         - **Size:** {file_size / 1024:.2f} KB  
                                         - **Last Modified:** {last_modified}  
 
@@ -1091,11 +1169,11 @@ elif st.session_state.authenticated:
                             else:
                                 st.error("❌ File missing")
                         with cols[2]:
-                            if st.button("Delete", key=f"delete_{file['name']}"):
-                                file_path = os.path.join(peer.download_dir, file['source'].replace(':', '_'), file['name'])
+                            if st.button("Delete", key=f"delete_{file}"):
+                                file_path = os.path.join(peer.download_dir, file)
                                 if os.path.exists(file_path):
                                     os.remove(file_path)
-                                    st.success(f"Deleted {file['name']}")
+                                    st.success(f"Deleted {file}")
                                     st.rerun()
 
         st.markdown("---")
