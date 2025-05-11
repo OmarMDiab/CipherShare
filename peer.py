@@ -970,7 +970,7 @@ elif st.session_state.authenticated:
                                                 # delay
                                                 # time.sleep(2)
                                                 # Download the chunk
-                                                with st.spinner(f"Downloading chunk from {selected_peer['username']}..."):
+                                                with st.spinner(f"Downloading from {selected_peer['username']}..."):
                                                     success = peer.download_file(
                                                         selected_peer['peer_id'],
                                                         chunk['chunk_name'],
@@ -1004,7 +1004,7 @@ elif st.session_state.authenticated:
                                                     else:
                                                         st.error("❌ Hashes mismatch!")
                                                         st.code(computed_hash[:64])
-                                                #time.sleep(1)  # Small delay before processing the next chunk
+                                                time.sleep(0.5)  # Small delay before processing the next chunk
                                                 # Clear the previous status before processing the next chunk
                                                 col1_placeholder.empty()
                                                 col2_placeholder.empty()
