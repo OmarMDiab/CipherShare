@@ -98,6 +98,8 @@ class P2PRequestHandler(SimpleHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(b'Forbidden: Invalid token')
             return
+
+
         
         # Log the file being requested
         filename = os.path.basename(self.path)
@@ -235,11 +237,36 @@ class PeerNode:
                     logger.warning(f"Heartbeat failed: {response.status_code}")
             except Exception as e:
                 logger.error(f"Heartbeat error: {str(e)}")
+
+
+    def fetch_all_usernames(self):
+        """Fetch all usernames from the rendezvous server."""
+        try:
+            headers = {"Authorization": f"Bearer {self.auth_token}"}
+            response = requests.get(f"{RENDEZVOUS_SERVER}/user/all_usernames", headers=headers, timeout=5)
+
+            if response.status_code == 200:
+                usernames = response.json().get("usernames", [])
+                logger.info(f"Fetched usernames: {usernames}")
+                return usernames
+            elif response.status_code in (401, 403):
+                logger.error("Authentication failure when fetching usernames")
+                st.session_state.authenticated = False
+                st.session_state.token = None
+                st.session_state.auth_error = "Your session has expired. Please log in again."
+            else:
+                logger.warning(f"Failed to fetch usernames: {response.status_code}")
+                return []
+        except Exception as e:
+            logger.error(f"Error fetching usernames: {str(e)}")
+            return []
+
 # ===========================================================================================
 # p2p getting shared files meta data!
 
     # def get_shared_files(self):
     #     return [f for f in os.listdir(self.shared_dir) if f.endswith('.manifest')]
+
 
     def get_shared_files(self):
         """Return all files in shared directory (both chunks and manifests)."""
@@ -285,11 +312,58 @@ class PeerNode:
         except Exception as e:
             logger.error(f"Error getting peers: {str(e)}")
             return {}
+    
+    def get_manifest_metadata(self, manifest_name):
+        """Retrieve metadata for a given manifest by name from the network."""
+        # Find peers that have the manifest
+        peers_with_manifest = self.get_peers_with_file(manifest_name)
+        if not peers_with_manifest:
+            logger.warning(f"No peers found with manifest '{manifest_name}'")
+            return None
 
-    def download_file(self, peer_address, filename, expected_hash=None, progress_callback=None):
+        # Convert to list to handle cases where peer IDs might be modified during iteration
+        available_peers = list(peers_with_manifest.items())
+        
+        # Try each peer until successful download
+        for peer_id, peer_info in available_peers:
+            peer_address = peer_info['address']
+            logger.info(f"Attempting to download manifest '{manifest_name}' from {peer_id} at {peer_address}")
+
+            # Download the manifest file without adding to shared directory
+            success = self.download_file(peer_id, manifest_name, add_to_shared=False)
+            if success:
+                # Read the downloaded manifest from download directory
+                manifest_path = os.path.join(self.download_dir, manifest_name)
+                try:
+                    with open(manifest_path, 'r') as f:
+                        metadata = json.load(f)
+                    logger.info(f"Successfully retrieved metadata for '{manifest_name}'")
+                    
+                    # Cleanup temporary file
+                    os.remove(manifest_path)
+                    return metadata
+                except json.JSONDecodeError as jde:
+                    logger.error(f"Invalid JSON in manifest '{manifest_name}': {str(jde)}")
+                    os.remove(manifest_path)
+                except Exception as e:
+                    logger.error(f"Error reading manifest '{manifest_name}': {str(e)}")
+                    if os.path.exists(manifest_path):
+                        os.remove(manifest_path)
+            else:
+                logger.warning(f"Failed to download manifest '{manifest_name}' from {peer_id}")
+
+        logger.error(f"Could not retrieve manifest '{manifest_name}' from any available peers")
+        return None
+
+
+    def download_file(self, peer_address, filename, expected_hash=None, progress_callback=None,add_to_shared=True):
         """Download a file from another peer with integrity verification."""
+        dest_path = os.path.join(self.download_dir, filename)
         try:
-            host, port = peer_address.split('_')
+            if '_' in peer_address:
+                host, port = peer_address.split('_')
+            else:
+                host, port = peer_address.split('.')
             url = f"http://{host}:{port}/{filename}"
             headers = {'Authorization': f'Bearer {self.auth_token}'}
         
@@ -302,7 +376,6 @@ class PeerNode:
                 # peer_dir = os.path.join(self.download_dir, peer_address.replace(':', '_'))
                 # os.makedirs(peer_dir, exist_ok=True)
                 # dest_path = os.path.join(peer_dir, filename)
-                dest_path = os.path.join(self.download_dir, filename)
                 total_size = int(response.headers.get('content-length', 0))
                 downloaded = 0
                 sha256 = hashlib.sha256()  # Initialize hash object
@@ -328,8 +401,9 @@ class PeerNode:
                 logger.info(f"Download complete: {filename}")
 
                 # Save directly to shared directory
-                share_path = os.path.join(self.shared_dir, filename)
-                shutil.copy(dest_path, share_path)
+                if add_to_shared:
+                    share_path = os.path.join(self.shared_dir, filename)
+                    shutil.copy(dest_path, share_path)
 
                 return True
                 
@@ -375,8 +449,10 @@ class PeerNode:
         except ValueError as ve:
             raise SecurityError(f"Decryption failed: {str(ve)}")
 
-    def upload_file(self, uploaded_file):
+    def upload_file(self, uploaded_file, allowed_users=None):
         """Handle file encryption, chunking, and manifest creation."""
+        if allowed_users is None:
+            allowed_users = []
         try:
             # Read the entire file into memory
             file_data = uploaded_file.getvalue()
@@ -394,6 +470,7 @@ class PeerNode:
             manifest = {
                 "original_filename": uploaded_file.name,
                 "total_chunks": len(chunks),
+                "allowed_users": [self.username] + allowed_users,
                 "owner": self.username,
                 "iv": iv.hex(),  # Store IV as hexadecimal string
                 "original_hash": original_hash.hex(),  # SHA-256 of original file
@@ -770,13 +847,18 @@ elif st.session_state.authenticated:
             except Exception as e:
                 st.error(f"Failed to start node: {str(e)}")
                 logger.error(f"Failed to start node: {str(e)}")
-
+                
+# ==============================================================================================================================
+    # App is running here...
+# ==============================================================================================================================
     # Main application (when node is running)
     if 'peer' in st.session_state:
         peer = st.session_state.peer
-        
+        usernames = peer.fetch_all_usernames()
+
         # Get shared files
         shared_manifests = peer.get_shared_files()
+        peers = peer.get_peers()
         shared_files = []
         
         for manifest in shared_manifests:
@@ -795,8 +877,15 @@ elif st.session_state.authenticated:
         with st.sidebar:
             st.subheader("📤 Upload & Share Files")
             uploaded_file = st.file_uploader("Select file to share", type=None)
-            
+            usernames_without_self = [u for u in usernames if u != peer.username]
             if uploaded_file:
+                # Fetch other users
+                selected_users = st.multiselect(
+                    "Share with users", 
+                    usernames_without_self, 
+                    key=f"share_users_{uploaded_file.name}"
+                )
+    
                 temp_path = os.path.join(peer.shared_dir, uploaded_file.name)
                 col1, col2 = st.columns([2,1])
                 with col1:
@@ -807,7 +896,7 @@ elif st.session_state.authenticated:
                             logger.info(f"Sharing file: {uploaded_file.name}")
                             
                             # Call the new upload_file method
-                            success, message = peer.upload_file(uploaded_file)
+                            success, message = peer.upload_file(uploaded_file,selected_users)
                             
                             if success:
                                 st.success(message)
@@ -871,9 +960,7 @@ elif st.session_state.authenticated:
         with st.container():
             st.subheader("🌐 Network Files")
             
-            peers = peer.get_peers()
             unique_manifests = {}
-            # st.write(peers)
             for peer_id, peer_data in peers.items():
                 # if peer_id == peer.peer_id:
                 #     continue
@@ -886,43 +973,53 @@ elif st.session_state.authenticated:
                         "username": peer_data.get('username', 'Unknown')
                     })
 
-            # st.write(unique_manifests)
-            
+
+
             if not peers:
                 st.info("No peers found")
             else:
                 for manifest_file, file_sharers in unique_manifests.items():
-                    # if peer_id == peer.peer_id:
-                    #     continue
-                    original_name = manifest_file[:-9]  # Remove ".manifest" suffix
                     peers_with_file = peer.get_peers_with_file(manifest_file)
+                    #st.write(f"peers_with_file: {peers_with_file}")
+                    manifest_metadata = peer.get_manifest_metadata(manifest_file)
+                    if not manifest_metadata:
+                        st.error(f"Failed to retrieve metadata for {manifest_file}")
+                        continue
+
+                    allowed_users = manifest_metadata.get('allowed_users', [])
+                    owner = manifest_metadata.get('owner', 'Unknown')
+                    total_chunks = manifest_metadata.get('total_chunks', 0)
+
+                    original_name = manifest_file[:-9]  # Remove ".manifest" suffix
                     file_exists = False
                     if peer.peer_id in peers_with_file:
                             file_exists = True
                     with st.expander(f"**📁 {original_name} ({len(file_sharers)} sharers)**"):
-                        # manifest_files = [f for f in peer_data.get('files', []) 
-                        #                 if f.endswith('.manifest')]
 
-                        # if not manifest_files:
-                        #     st.write("No files shared")
-                        #     continue
-                        
                             # file sharers usernames
-                            usernames = [sharer['username'] for sharer in file_sharers]
+                            sharers_usernames = [sharer['username'] for sharer in file_sharers]
                             peer_ids = [sharer['peer_id'] for sharer in file_sharers]
 
                             cols = st.columns([1,1])
                             with cols[0]:
                                 st.markdown("**File Sharers:**")
-                                for idx, (peer_id, username) in enumerate(zip(peer_ids, usernames)):
+                                for idx, (peer_id, username) in enumerate(zip(peer_ids, sharers_usernames)):
                                     if peer_id == peer.peer_id:
-                                        st.markdown(f"{idx+1}. {username} ({peer_id}) **[You]**")
+                                        if username ==owner:
+                                            st.markdown(f"{idx+1}. {username} ({peer_id}) **[You]** (Owner)")
+                                        else:
+                                            st.markdown(f"{idx+1}. {username} ({peer_id}) **[You]**")
                                     else:
-                                        st.markdown(f"{idx+1}. {username} ({peer_id})")
+                                        if username == owner:
+                                            st.markdown(f"{idx+1}. {username} ({peer_id}) **[Owner]**")
+                                        else:
+                                            st.markdown(f"{idx+1}. {username} ({peer_id})")
                             
                             with cols[1]:
-                                if file_exists:
-                                    st.success("File are already a sharer")
+                                if peer.username not in allowed_users:
+                                    st.error("❌ You are not allowed to download this file") 
+                                elif file_exists:
+                                    st.success("You are already a sharer")
                                 else:
                                     if st.button("⬇️ Download", key=f"dl_{peer_id}_{original_name}"):
                                         dl_status = st.empty()
@@ -1120,8 +1217,7 @@ elif st.session_state.authenticated:
         with st.container():
             st.subheader("📥 Downloaded Files")
             downloaded_files = []
-# get usernames except for the current peer usernmae
-            sources = [username for username in usernames if username != peer.username]
+            # get usernames except for the current peer usernmae
             for file in os.listdir(peer.download_dir):
                     if not (file.endswith('.manifest') or file.endswith('.part')):
                         downloaded_files.append(file)
@@ -1129,6 +1225,8 @@ elif st.session_state.authenticated:
             if not downloaded_files:
                 st.info("No downloads yet")
             else:
+                sources = [username for username in sharers_usernames if username != peer.username]
+
                 # In the downloaded files section (around line 1512):
                 for file in downloaded_files:
                     file_path = os.path.join(peer.download_dir, file)

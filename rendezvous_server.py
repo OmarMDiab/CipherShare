@@ -375,6 +375,8 @@ def login_user():
         logger.error(f"Login error for user '{username}': {str(e)}")
         return jsonify({'status': 'error', 'message': 'Login error'}), 500
 
+
+
 @app.route('/user/logout', methods=['POST'])
 def logout_user():
     """Log out a user by invalidating their session."""
@@ -448,6 +450,18 @@ def get_peers_with_file(filename):
         if filename in info['files']
     }
     return jsonify({'peers': matching_peers})
+# ==============================================================================================
+
+@app.route('/user/all_usernames', methods=['GET'])
+def get_all_usernames():
+    """Return a list of all usernames."""
+    try:
+        users = users_collection.find({}, {"_id": 0, "username": 1})
+        usernames = [user['username'] for user in users]
+        return jsonify({'status': 'success', 'usernames': usernames}), 200
+    except Exception as e:
+        logger.error(f"Error retrieving usernames: {str(e)}")
+        return jsonify({'status': 'error', 'message': 'Failed to retrieve usernames'}), 500
 # ==============================================================================================
 
 # Background task to clean up expired sessions
